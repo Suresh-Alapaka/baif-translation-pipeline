@@ -1,28 +1,24 @@
-# ── Speech to Text ──────────────────────────────────
+# Speech to Text
 faster-whisper
 
-# ── Translation ──────────────────────────────────────
+# Translation
 transformers==4.46.1
 sentencepiece
 IndicTransToolkit
 
-# ── Text to Speech ───────────────────────────────────
-git+https://github.com/huggingface/parler-tts.git
+# Text to Speech
+# Install with: pip install git+https://github.com/huggingface/parler-tts.git
 
-# ── Audio processing ─────────────────────────────────
+# Audio processing
 soundfile
 pydub
-torchaudio==2.5.1
 
-# ── Web framework ────────────────────────────────────
+# Web framework
 flask
 
-# ── PyTorch (CPU) ────────────────────────────────────
-# If you have an NVIDIA GPU with CUDA 12.1, use:
-#   pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
-# Otherwise install CPU version:
-torch==2.5.1
+# PyTorch — install separately with the commands in README
+# pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+# pip install torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
 
-# ── Hugging Face hub ─────────────────────────────────
-# Must stay below 1.0 for transformers 4.46.1 compatibility
-"huggingface-hub>=0.23.2,<1.0"
+# Hugging Face hub — must stay below 1.0
+# pip install "huggingface-hub>=0.23.2,<1.0"

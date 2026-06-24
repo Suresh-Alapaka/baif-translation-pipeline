@@ -1,109 +1,86 @@
 # 🌐 BAIF Offline Indic Translation Pipeline
 
-**Tech for Good Hackathon — AI4Bharat**
-
-An offline-capable translation application that accepts **text, audio, and video** inputs, transcribes speech, translates into Indian regional languages, and generates high-quality outputs including translated text, dubbed audio, and SRT/VTT subtitles.
-
----
-
-## 📋 Features
-
-- ✅ **Input formats**: MP4, MOV, AVI, WMV, MKV, FLV, WebM, MP3, WAV, AAC, M4A, FLAC, WMA, OGG, TXT
-- ✅ **Languages**: English ↔ Hindi ↔ Marathi (bidirectional)
-- ✅ **Outputs**: Translated text, dubbed audio (WAV), SRT subtitles, VTT subtitles, burned-in captioned video
-- ✅ **Fully offline** after one-time model download
-- ✅ **Open-source only** — no paid APIs, no licensing fees
-- ✅ **Simple web UI** — runs in any browser at localhost:5000
+An offline translation pipeline that accepts text, audio, and video,
+transcribes speech, translates into Indian regional languages, and
+generates dubbed audio and SRT/VTT subtitles.
 
 ---
 
-## 🧱 Tech Stack
+## ✅ Verified Setup Steps (Windows)
 
-| Component | Tool | Purpose |
-|---|---|---|
-| Speech-to-Text | faster-whisper (medium, int8) | Transcription — 3-4x faster than openai-whisper on CPU |
-| Translation | AI4Bharat IndicTrans2 1B | Best-in-class open-source Indian language NMT |
-| Text-to-Speech | AI4Bharat Indic Parler-TTS | Natural Indian language speech synthesis |
-| Media handling | ffmpeg | Audio extraction, subtitle burning, video dubbing |
-| Web UI | Flask | Lightweight local web server with background job polling |
-
----
-
-## 🖥️ System Requirements
-
-- Windows 10/11, Ubuntu 20.04+, or macOS 12+
+### Prerequisites
+- Windows 10/11
 - Python 3.10
-- 20 GB free disk space (for model weights)
-- 16 GB RAM recommended (8 GB minimum)
-- ffmpeg installed and on PATH
-- Internet access for initial model download only
+- Internet connection (for first-time model download only)
 
 ---
-
-## ⚙️ Installation (Step by Step)
 
 ### Step 1 — Install ffmpeg
 
-**Windows:**
+Open Command Prompt and run:
 ```
 winget install ffmpeg
 ```
-Close and reopen terminal after. Verify: `ffmpeg -version`
-
-**Linux/macOS:**
+Close and reopen Command Prompt after. Verify:
 ```
-sudo apt install ffmpeg        # Ubuntu/Debian
-brew install ffmpeg            # macOS
+ffmpeg -version
 ```
 
 ---
 
-### Step 2 — Install Microsoft C++ Build Tools (Windows only)
+### Step 2 — Install Microsoft C++ Build Tools
 
-Required to compile `IndicTransToolkit`.
+Required to build IndicTransToolkit.
 
-1. Download from https://visualstudio.microsoft.com/visual-cpp-build-tools/
-2. Run installer → select **"Desktop development with C++"**
-3. Install and restart your terminal
+1. Download from: https://visualstudio.microsoft.com/visual-cpp-build-tools/
+2. Run the installer
+3. Select "Desktop development with C++"
+4. Click Install (large download, takes 15-30 mins)
+5. Restart your terminal after
 
 ---
 
 ### Step 3 — Create Python virtual environment
 
-```bash
-python -m venv whisper-env
-
-# Activate (Windows):
-whisper-env\Scripts\activate
-
-# Activate (Linux/macOS):
-source whisper-env/bin/activate
 ```
+cd C:\Users\<your-username>
+python -m venv whisper-env
+whisper-env\Scripts\activate
+```
+
+Your prompt should now show (whisper-env).
 
 ---
 
 ### Step 4 — Install Python packages
 
-```bash
+Run each command one by one:
+
+```
 pip install --upgrade pip
-
-# PyTorch — CPU version:
-pip install torch==2.5.1
-
-# If you have an NVIDIA GPU with CUDA 12.1:
-# pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
-
-# torchaudio — must match torch version:
+```
+```
+pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+```
+```
 pip install torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
-
-# Core packages:
+```
+```
 pip install faster-whisper
+```
+```
 pip install transformers==4.46.1 sentencepiece
+```
+```
 pip install IndicTransToolkit
+```
+```
 pip install git+https://github.com/huggingface/parler-tts.git
+```
+```
 pip install soundfile pydub flask
-
-# Pin huggingface-hub to be compatible with transformers 4.46.1:
+```
+```
 pip install "huggingface-hub>=0.23.2,<1.0"
 ```
 
@@ -111,17 +88,17 @@ pip install "huggingface-hub>=0.23.2,<1.0"
 
 ### Step 5 — Authenticate with Hugging Face
 
-The IndicTrans2 and Parler-TTS models are gated (require a free account to download).
-
 1. Create a free account at https://huggingface.co
-2. Generate a token at https://huggingface.co/settings/tokens (Read access)
-3. Login:
-```bash
-hf auth login
-# paste your token when prompted
+2. Go to https://huggingface.co/settings/tokens
+3. Click New token → select Read → Generate
+4. Copy the token (starts with hf_...)
+5. Run:
 ```
+hf auth login
+```
+Paste your token when prompted.
 
-4. Visit each link below and click **"Agree and access repository"**:
+6. Visit each link below while logged in and click "Agree and access repository":
    - https://huggingface.co/ai4bharat/indictrans2-en-indic-1B
    - https://huggingface.co/ai4bharat/indictrans2-indic-en-1B
    - https://huggingface.co/ai4bharat/indictrans2-indic-indic-1B
@@ -129,173 +106,109 @@ hf auth login
 
 ---
 
-### Step 6 — Download all models
+### Step 6 — Download all models (one time only)
 
-```bash
+```
 python scripts/download_models.py
 ```
 
-This downloads (~15–18 GB total) and caches:
-- Whisper medium (~1.5 GB)
-- IndicTrans2 en→indic 1B (~9 GB)
-- IndicTrans2 indic→en 1B (~8 GB)
-- IndicTrans2 indic→indic 1B (~10 GB)
-- Indic Parler-TTS (~4 GB)
-
-> ⚠️ This only needs to be done once. Models cache locally and work offline after this.
+This downloads ~15-18 GB total. Let it complete fully.
+Models are cached locally and work offline after this step.
 
 ---
 
-### Step 7 — Verify installation
+### Step 7 — Run the app
 
-```bash
-python scripts/test_components.py path/to/any_audio.mp3
 ```
-
-You should see all three tests pass:
-```
-✅ Whisper done
-✅ Translation done
-✅ Speech generated → test_output.wav
-🎉  ALL TESTS PASSED
-```
-
----
-
-## 🚀 Running the App
-
-```bash
-# Make sure venv is active
-whisper-env\Scripts\activate   # Windows
-source whisper-env/bin/activate  # Linux/macOS
-
+whisper-env\Scripts\activate
 python app_flask.py
 ```
 
-Then open your browser at: **http://localhost:5000**
+Open your browser at: http://localhost:5000
 
 ---
 
-## 🎯 Using the App
+## Using the App
 
-1. Click **"Click to choose file"** and upload a video, audio, or text file
+1. Click "Click to choose file" and upload a video, audio, or text file
 2. Select the target language (Hindi / Marathi / English)
-3. Click **"Process & Translate"**
-4. Watch the Processing Log for live progress updates (updates every 3 seconds)
-5. Once done, the output video plays directly in the browser
-6. Download buttons appear for: **MP4 video**, **WAV audio**, **SRT subtitles**, **VTT subtitles**
+3. Click "Process & Translate"
+4. Watch the Processing Log for live progress (updates every 3 seconds)
+5. Once done, the output video plays in the browser
+6. Download buttons appear for MP4, WAV, SRT, VTT files
 
-### Output filenames
-Files are named after the original input, prefixed with the language:
-- `hindi_farmer_video.mp4`
-- `marathi_farmer_video.srt`
-- `english_farmer_video.wav`
-
----
-
-## 📦 Offline Deployment (BAIF On-Premises Machines)
-
-After downloading all models on an internet-connected machine:
-
-**Step 1 — Copy the HF model cache to the offline machine:**
-```
-# Windows source path:
-C:\Users\<username>\.cache\huggingface
-
-# Copy to same path on the offline machine
-```
-
-**Step 2 — Copy the pip wheelhouse:**
-```bash
-# On internet machine:
-pip download -r requirements.txt -d wheels/
-
-# On offline machine:
-pip install --no-index --find-links=wheels/ -r requirements.txt
-```
-
-**Step 3 — Set offline environment variables on the offline machine:**
-```bash
-# Windows:
-set HF_HUB_OFFLINE=1
-set TRANSFORMERS_OFFLINE=1
-
-# Linux/macOS:
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-```
-
-**Step 4 — Run the app (no internet needed):**
-```bash
-python app_flask.py
-```
+Output filenames are named after the original input prefixed with the language:
+- hindi_farmer_video.mp4
+- marathi_farmer_video.srt
+- english_farmer_video.wav
 
 ---
 
-## 📁 Project Structure
+## Processing Time (CPU only)
+
+| Video length | Approximate time |
+|---|---|
+| 30 seconds | 4-6 minutes |
+| 1 minute | 8-15 minutes |
+
+---
+
+## Project Structure
 
 ```
 baif-translation-pipeline/
-├── app_flask.py              # Main Flask web application
-├── requirements.txt          # All Python dependencies
+├── app_flask.py                  <- Main app, run this
+├── requirements.txt              <- All Python dependencies
+├── README.md                     <- This file
 ├── .gitignore
-├── README.md
 ├── scripts/
-│   ├── download_models.py    # One-time model download script
-│   └── test_components.py    # Smoke test for each pipeline component
-├── output/                   # Generated files (gitignored)
-└── uploads/                  # Uploaded input files (gitignored)
+│   ├── download_models.py        <- Download models (run once)
+│   └── test_components.py        <- Test each component
+├── output/                       <- Generated files (not tracked by git)
+└── uploads/                      <- Uploaded files (not tracked by git)
 ```
 
 ---
 
-## ⏱️ Performance Expectations (CPU-only)
+## Common Errors and Fixes
 
-| Video length | Approximate processing time |
+whisper module not found
+-> Use faster-whisper not openai-whisper. The app uses faster-whisper.
+
+Microsoft Visual C++ 14.0 required
+-> Install C++ Build Tools (Step 2 above).
+
+401 Unauthorized downloading models
+-> Run: hf auth login and paste your HF token.
+
+403 Forbidden / GatedRepoError
+-> Visit each model page on HF and click "Agree and access repository".
+
+huggingface-hub version conflict
+-> Run: pip install "huggingface-hub>=0.23.2,<1.0"
+
+torchaudio version mismatch
+-> Run: pip install torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+
+ffmpeg not found
+-> Close and reopen terminal after installing ffmpeg.
+
+---
+
+## Tech Stack
+
+| Component | Tool |
 |---|---|
-| 30 seconds | 4–6 minutes |
-| 1 minute | 8–15 minutes |
-| 5 minutes | 40–60 minutes |
-
-> Processing time is dominated by Parler-TTS on CPU. A machine with an NVIDIA GPU would reduce this by 5-10x.
-
----
-
-## 🛠️ Troubleshooting
-
-**`Error: ffmpeg not found`**
-→ Install ffmpeg and reopen your terminal so PATH updates.
-
-**`Microsoft Visual C++ 14.0 required`**
-→ Install Microsoft C++ Build Tools (Step 2 above).
-
-**`401 Unauthorized` or `403 Forbidden` downloading models**
-→ Run `hf auth login` and accept access on each model's HF page.
-
-**`huggingface-hub` version conflict with gradio**
-→ This repo uses Flask not Gradio, so this conflict doesn't apply here.
-
-**`torchaudio` version mismatch error**
-→ Reinstall: `pip install torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121`
-
-**"Failed to fetch" in browser on long videos**
-→ The app uses background job polling — this should not happen. If it does, check the terminal for errors and refresh the browser.
+| Speech-to-Text | faster-whisper (Whisper medium, int8) |
+| Translation | AI4Bharat IndicTrans2 1B |
+| Text-to-Speech | AI4Bharat Indic Parler-TTS |
+| Media handling | ffmpeg |
+| Web UI | Flask |
 
 ---
 
-## 📄 License
+## Credits
 
-All models used are open-source:
-- Whisper: MIT License
-- IndicTrans2: MIT License
-- Indic Parler-TTS: Apache 2.0
-- faster-whisper: MIT License
-- Flask: BSD License
-
----
-
-## 🙏 Credits
-
-- [AI4Bharat](https://ai4bharat.iitm.ac.in/) — IndicTrans2 and Indic Parler-TTS
-- [OpenAI](https://github.com/openai/whisper) — Whisper ASR
-- [Systran](https://github.com/SYSTRAN/faster-whisper) — faster-whisper
+- AI4Bharat (https://ai4bharat.iitm.ac.in/) - IndicTrans2 and Indic Parler-TTS
+- OpenAI (https://github.com/openai/whisper) - Whisper ASR
+- Systran (https://github.com/SYSTRAN/faster-whisper) - faster-whisper

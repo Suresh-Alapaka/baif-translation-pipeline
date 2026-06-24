@@ -278,7 +278,7 @@ def run_pipeline_job(job_id, upload_path, original_name, tgt):
 # ─── FLASK APP ────────────────────────────────────────
 app = Flask(__name__)
 
-HTML = """
+HTML = r"""
 <!DOCTYPE html>
 <html>
 <head>

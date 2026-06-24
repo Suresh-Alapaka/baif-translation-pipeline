@@ -60,10 +60,10 @@ Run each command one by one:
 pip install --upgrade pip
 ```
 ```
-pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+pip install torch
 ```
 ```
-pip install torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+pip install torch --index-url https://download.pytorch.org/whl/cu121
 ```
 ```
 pip install faster-whisper
@@ -75,6 +75,7 @@ pip install transformers==4.46.1 sentencepiece
 pip install IndicTransToolkit
 ```
 ```
+--before the below step install git from (https://git-scm.com/install/windows)
 pip install git+https://github.com/huggingface/parler-tts.git
 ```
 ```

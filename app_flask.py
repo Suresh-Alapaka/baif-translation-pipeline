@@ -1,4 +1,4 @@
-import os, subprocess, torch, soundfile as sf, threading, uuid
+import os, subprocess, time, torch, soundfile as sf, threading, uuid
 import numpy as np
 from faster_whisper import WhisperModel
 from flask import Flask, request, render_template_string, send_file, jsonify
@@ -23,19 +23,28 @@ CHECKPOINTS = {
 
 VIDEO_EXT = {".mp4", ".mov", ".avi", ".wmv", ".mkv", ".flv", ".webm"}
 AUDIO_EXT = {".mp3", ".wav", ".aac", ".m4a", ".flac", ".wma", ".ogg"}
-device = "cpu"
+
+# ─── DETECT GPU ───────────────────────────────────────
+if torch.cuda.is_available():
+    device = "cuda"
+    print(f"✅ GPU detected: {torch.cuda.get_device_name(0)}")
+else:
+    device = "cpu"
+    print("⚠️ No GPU found. Using CPU (slower)")
 os.makedirs("output", exist_ok=True)
 os.makedirs("uploads", exist_ok=True)
 jobs = {}
 
 # ─── LOAD MODELS AT STARTUP ───────────────────────────
 print("Loading Whisper medium (faster-whisper, int8)...")
-whisper_model = WhisperModel("medium", device="cpu", compute_type="int8")
+compute_type = "float16" if device == "cuda" else "int8"
+whisper_model = WhisperModel("medium", device=device, compute_type=compute_type)
 print("✅ Whisper ready")
 
 print("Loading Parler-TTS...")
+tts_dtype = torch.float16 if device == "cuda" else torch.float32
 tts_model = ParlerTTSForConditionalGeneration.from_pretrained(
-    "ai4bharat/indic-parler-tts").to(device)
+    "ai4bharat/indic-parler-tts", torch_dtype=tts_dtype).to(device)
 tts_tok  = AutoTokenizer.from_pretrained("ai4bharat/indic-parler-tts")
 desc_tok = AutoTokenizer.from_pretrained(
     tts_model.config.text_encoder._name_or_path)
@@ -49,7 +58,12 @@ def get_translator(src, tgt):
         ckpt = CHECKPOINTS[key]
         print(f"Loading IndicTrans2 {src}→{tgt}...")
         tok = AutoTokenizer.from_pretrained(ckpt, trust_remote_code=True)
-        mdl = AutoModelForSeq2SeqLM.from_pretrained(ckpt, trust_remote_code=True)
+        torch_dtype = torch.float16 if device == "cuda" else torch.float32
+        mdl = AutoModelForSeq2SeqLM.from_pretrained(
+            ckpt,
+            trust_remote_code=True,
+            torch_dtype=torch_dtype
+        ).to(device)
         trans_cache[key] = (tok, mdl)
         print(f"✅ Translator {src}→{tgt} ready")
     return trans_cache[key]
@@ -100,6 +114,7 @@ def translate(sentences, src, tgt):
     batch   = ip.preprocess_batch(sentences,
                 src_lang=LANG_CODE[src], tgt_lang=LANG_CODE[tgt])
     inputs  = tok(batch, padding=True, truncation=True, return_tensors="pt")
+    inputs  = {k: v.to(device) for k, v in inputs.items()}
     outputs = mdl.generate(**inputs, num_beams=1, max_length=256)
     decoded = tok.batch_decode(outputs, skip_special_tokens=True)
     return ip.postprocess_batch(decoded, lang=LANG_CODE[tgt])
@@ -112,8 +127,14 @@ def synthesize(text, out_path):
     with torch.no_grad():
         audio = tts_model.generate(
             input_ids=desc_ids, prompt_input_ids=prm_ids)
-    sf.write(out_path, audio.cpu().numpy().squeeze(),
-             tts_model.config.sampling_rate)
+    audio_np = audio.cpu().numpy().squeeze()
+    if audio_np.ndim == 0:
+        audio_np = np.expand_dims(audio_np, -1)
+    elif audio_np.ndim == 1:
+        audio_np = audio_np[:, None]
+    if audio_np.dtype == np.float16:
+        audio_np = audio_np.astype(np.float32)
+    sf.write(out_path, audio_np, tts_model.config.sampling_rate)
     return out_path
 
 def normalize_audio(seg):
@@ -193,6 +214,7 @@ def make_output_name(original_filename, lang, suffix):
 
 # ─── BACKGROUND JOB ───────────────────────────────────
 def run_pipeline_job(job_id, upload_path, original_name, tgt):
+    start_time = time.time()
     try:
         kind = classify(upload_path)
         jobs[job_id]["log"] += f"📂 Type: {kind}\n"
@@ -259,6 +281,7 @@ def run_pipeline_job(job_id, upload_path, original_name, tgt):
             burn_and_dub(upload_path, srt_path, dubbed_path, out_video)
             jobs[job_id]["log"] += f"✅ Done: {mp4_name}\n"
 
+        elapsed = time.time() - start_time
         jobs[job_id]["result"] = {
             "video": f"/download/{os.path.basename(out_video)}"
                      if out_video else None,
@@ -266,8 +289,9 @@ def run_pipeline_job(job_id, upload_path, original_name, tgt):
                      if dubbed_path else None,
             "srt":   f"/download/{srt_name}",
             "vtt":   f"/download/{vtt_name}",
+            "elapsed_seconds": round(elapsed, 2),
         }
-        jobs[job_id]["log"] += "🎉 All done!\n"
+        jobs[job_id]["log"] += f"🎉 All done! Total time: {round(elapsed, 2)}s\n"
         jobs[job_id]["status"] = "done"
 
     except Exception as e:

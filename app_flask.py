@@ -1,54 +1,53 @@
-import os, subprocess, time, torch, soundfile as sf, threading, uuid
-import numpy as np
+import os,time, subprocess, torch, soundfile as sf, threading, uuid
 from faster_whisper import WhisperModel
 from flask import Flask, request, render_template_string, send_file, jsonify
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, VitsModel
 from IndicTransToolkit.processor import IndicProcessor
-from parler_tts import ParlerTTSForConditionalGeneration
 from pydub import AudioSegment, effects
 
-# ─── CONFIG ───────────────────────────────────────────
-LANG_CODE  = {"en": "eng_Latn", "hi": "hin_Deva", "mr": "mar_Deva"}
-LANG_NAMES = {"en": "English",  "hi": "Hindi",     "mr": "Marathi"}
-LANG_FOLDER= {"en": "english",  "hi": "hindi",     "mr": "marathi"}
+# ─── CONFIG (LITE — small/fast models) ────────────────
+LANG_CODE   = {"en": "eng_Latn", "hi": "hin_Deva", "mr": "mar_Deva"}
+LANG_NAMES  = {"en": "English",  "hi": "Hindi",     "mr": "Marathi"}
+LANG_FOLDER = {"en": "english",  "hi": "hindi",     "mr": "marathi"}
 
+# Distilled IndicTrans2 — much smaller/faster than the 1B models
 CHECKPOINTS = {
-    ("en", "hi"): "ai4bharat/indictrans2-en-indic-1B",
-    ("en", "mr"): "ai4bharat/indictrans2-en-indic-1B",
-    ("hi", "en"): "ai4bharat/indictrans2-indic-en-1B",
-    ("mr", "en"): "ai4bharat/indictrans2-indic-en-1B",
-    ("hi", "mr"): "ai4bharat/indictrans2-indic-indic-1B",
-    ("mr", "hi"): "ai4bharat/indictrans2-indic-indic-1B",
+    ("en", "hi"): "ai4bharat/indictrans2-en-indic-dist-200M",
+    ("en", "mr"): "ai4bharat/indictrans2-en-indic-dist-200M",
+    ("hi", "en"): "ai4bharat/indictrans2-indic-en-dist-200M",
+    ("mr", "en"): "ai4bharat/indictrans2-indic-en-dist-200M",
+    ("hi", "mr"): "ai4bharat/indictrans2-indic-indic-dist-320M",
+    ("mr", "hi"): "ai4bharat/indictrans2-indic-indic-dist-320M",
+}
+
+# MMS-TTS — small, fast, non-autoregressive (1-3s per segment on CPU)
+MMS_MODELS = {
+    "hi": "facebook/mms-tts-hin",
+    "mr": "facebook/mms-tts-mar",
+    "en": "facebook/mms-tts-eng",
 }
 
 VIDEO_EXT = {".mp4", ".mov", ".avi", ".wmv", ".mkv", ".flv", ".webm"}
 AUDIO_EXT = {".mp3", ".wav", ".aac", ".m4a", ".flac", ".wma", ".ogg"}
-
-# ─── DETECT GPU ───────────────────────────────────────
-if torch.cuda.is_available():
-    device = "cuda"
-    print(f"✅ GPU detected: {torch.cuda.get_device_name(0)}")
-else:
-    device = "cpu"
-    print("⚠️ No GPU found. Using CPU (slower)")
+device = "cpu"
 os.makedirs("output", exist_ok=True)
 os.makedirs("uploads", exist_ok=True)
 jobs = {}
 
 # ─── LOAD MODELS AT STARTUP ───────────────────────────
-print("Loading Whisper medium (faster-whisper, int8)...")
-compute_type = "float16" if device == "cuda" else "int8"
-whisper_model = WhisperModel("medium", device=device, compute_type=compute_type)
+print("Loading Whisper SMALL (faster-whisper, int8)...")
+whisper_model = WhisperModel("small", device="cpu", compute_type="int8")
 print("✅ Whisper ready")
 
-print("Loading Parler-TTS...")
-tts_dtype = torch.float16 if device == "cuda" else torch.float32
-tts_model = ParlerTTSForConditionalGeneration.from_pretrained(
-    "ai4bharat/indic-parler-tts", torch_dtype=tts_dtype).to(device)
-tts_tok  = AutoTokenizer.from_pretrained("ai4bharat/indic-parler-tts")
-desc_tok = AutoTokenizer.from_pretrained(
-    tts_model.config.text_encoder._name_or_path)
-print("✅ Parler-TTS ready")
+print("Loading MMS-TTS models (fast, offline)...")
+mms_cache = {}
+for lang_code, model_id in MMS_MODELS.items():
+    print(f"  Loading {LANG_NAMES[lang_code]}...")
+    mms_cache[lang_code] = {
+        "model":     VitsModel.from_pretrained(model_id),
+        "tokenizer": AutoTokenizer.from_pretrained(model_id),
+    }
+print("✅ MMS-TTS ready")
 
 trans_cache = {}
 
@@ -56,14 +55,9 @@ def get_translator(src, tgt):
     key = (src, tgt)
     if key not in trans_cache:
         ckpt = CHECKPOINTS[key]
-        print(f"Loading IndicTrans2 {src}→{tgt}...")
+        print(f"Loading IndicTrans2 (distilled) {src}→{tgt} ({ckpt})...")
         tok = AutoTokenizer.from_pretrained(ckpt, trust_remote_code=True)
-        torch_dtype = torch.float16 if device == "cuda" else torch.float32
-        mdl = AutoModelForSeq2SeqLM.from_pretrained(
-            ckpt,
-            trust_remote_code=True,
-            torch_dtype=torch_dtype
-        ).to(device)
+        mdl = AutoModelForSeq2SeqLM.from_pretrained(ckpt, trust_remote_code=True)
         trans_cache[key] = (tok, mdl)
         print(f"✅ Translator {src}→{tgt} ready")
     return trans_cache[key]
@@ -92,8 +86,7 @@ def get_duration(path):
     return float(result.stdout.strip())
 
 def merge_segments(segments, max_gap=0.5, max_duration=15):
-    """Merge nearby Whisper segments to reduce total number of TTS calls."""
-    merged  = []
+    merged = []
     current = None
     for seg in segments:
         if current and seg["start"] - current["end"] <= max_gap and \
@@ -114,58 +107,40 @@ def translate(sentences, src, tgt):
     batch   = ip.preprocess_batch(sentences,
                 src_lang=LANG_CODE[src], tgt_lang=LANG_CODE[tgt])
     inputs  = tok(batch, padding=True, truncation=True, return_tensors="pt")
-    inputs  = {k: v.to(device) for k, v in inputs.items()}
     outputs = mdl.generate(**inputs, num_beams=1, max_length=256)
     decoded = tok.batch_decode(outputs, skip_special_tokens=True)
     return ip.postprocess_batch(decoded, lang=LANG_CODE[tgt])
 
-def synthesize(text, out_path):
-    """Single Parler-TTS call for one text chunk."""
-    desc     = "A clear, natural voice at a moderate pace."
-    desc_ids = desc_tok(desc, return_tensors="pt").input_ids.to(device)
-    prm_ids  = tts_tok(text, return_tensors="pt").input_ids.to(device)
+def synthesize_mms(text, tgt, out_path):
+    entry  = mms_cache[tgt]
+    inputs = entry["tokenizer"](text, return_tensors="pt")
     with torch.no_grad():
-        audio = tts_model.generate(
-            input_ids=desc_ids, prompt_input_ids=prm_ids)
-    audio_np = audio.cpu().numpy().squeeze()
-    if audio_np.ndim == 0:
-        audio_np = np.expand_dims(audio_np, -1)
-    elif audio_np.ndim == 1:
-        audio_np = audio_np[:, None]
-    if audio_np.dtype == np.float16:
-        audio_np = audio_np.astype(np.float32)
-    sf.write(out_path, audio_np, tts_model.config.sampling_rate)
+        output = entry["model"](**inputs).waveform
+    audio_np    = output.squeeze().numpy()
+    sample_rate = entry["model"].config.sampling_rate
+    sf.write(out_path, audio_np, sample_rate)
     return out_path
 
 def normalize_audio(seg):
-    """Normalize loudness so quiet segments match the rest of the track."""
     return effects.normalize(seg)
 
-def synthesize_segments(segments, texts, out_path,
+def synthesize_segments(segments, texts, tgt, out_path,
                          total_duration_sec, job_id):
-    """
-    Generate TTS per merged segment and place each clip at its correct
-    timestamp on a silent track matching the video's duration.
-    Audio is normalized per segment to fix volume inconsistency.
-    """
     track    = AudioSegment.silent(
                    duration=int(total_duration_sec * 1000) + 1000)
     tmp_path = f"output/_seg_tmp_{job_id}.wav"
     total    = len([t for t in texts if t.strip()])
     done     = 0
-
     for seg, txt in zip(segments, texts):
         if not txt.strip():
             continue
         done += 1
-        jobs[job_id]["log"] += \
-            f"  🔊 TTS segment {done}/{total}: {txt[:60]}\n"
-        synthesize(txt, tmp_path)
+        jobs[job_id]["log"] += f"  🔊 TTS {done}/{total}: {txt[:60]}\n"
+        synthesize_mms(txt, tgt, tmp_path)
         seg_audio = AudioSegment.from_wav(tmp_path)
         seg_audio = normalize_audio(seg_audio)
         start_ms  = int(seg["start"] * 1000)
         track     = track.overlay(seg_audio, position=start_ms)
-
     track = track[:int(total_duration_sec * 1000)]
     track.export(out_path, format="wav")
     return out_path
@@ -201,12 +176,7 @@ def burn_and_dub(video_path, srt_path, audio_path, out_path):
     return out_path
 
 def make_output_name(original_filename, lang, suffix):
-    """
-    Output filenames: hindi_farmer_video.mp4
-                      marathi_farmer_video.srt etc.
-    """
     base = os.path.splitext(os.path.basename(original_filename))[0]
-    # Strip job-id prefix added on upload (8 hex chars + underscore)
     if len(base) > 9 and base[8] == "_":
         base = base[9:]
     ext = {"mp4": ".mp4", "wav": ".wav", "srt": ".srt", "vtt": ".vtt"}[suffix]
@@ -214,20 +184,19 @@ def make_output_name(original_filename, lang, suffix):
 
 # ─── BACKGROUND JOB ───────────────────────────────────
 def run_pipeline_job(job_id, upload_path, original_name, tgt):
-    start_time = time.time()
     try:
+        start_time = time.time()
         kind = classify(upload_path)
         jobs[job_id]["log"] += f"📂 Type: {kind}\n"
 
-        # Step 1: Transcribe
         if kind == "text":
             text     = open(upload_path, encoding="utf-8").read()
             segments = [{"start": 0, "end": 0, "text": text}]
             src_lang = "en"
         else:
-            audio_path = extract_audio(upload_path) \
-                         if kind == "video" else upload_path
-            jobs[job_id]["log"] += "🎙️ Transcribing with Whisper medium...\n"
+            audio_path = extract_audio(upload_path) if kind == "video" \
+                         else upload_path
+            jobs[job_id]["log"] += "🎙️ Transcribing with Whisper small...\n"
             segs_iter, info = whisper_model.transcribe(
                 audio_path, word_timestamps=True)
             segments = [{"start": s.start, "end": s.end, "text": s.text}
@@ -244,13 +213,11 @@ def run_pipeline_job(job_id, upload_path, original_name, tgt):
                 f"⚠️ Source and target are both {LANG_NAMES[tgt]}\n"
             return
 
-        # Step 2: Translate
         jobs[job_id]["log"] += \
-            f"🔄 Translating → {LANG_NAMES[tgt]} (IndicTrans2 1B)...\n"
+            f"🔄 Translating → {LANG_NAMES[tgt]} (distilled, greedy)...\n"
         texts = translate([s["text"] for s in segments], src_lang, tgt)
         jobs[job_id]["log"] += f"✅ Translation: {texts[0][:120]}\n"
 
-        # Step 3: Subtitles
         srt_name = make_output_name(original_name, tgt, "srt")
         vtt_name = make_output_name(original_name, tgt, "vtt")
         srt_path = f"output/{srt_name}"
@@ -262,18 +229,16 @@ def run_pipeline_job(job_id, upload_path, original_name, tgt):
         dubbed_path = None
         out_video   = None
 
-        # Step 4: TTS with Parler-TTS per segment
         if kind != "text":
             jobs[job_id]["log"] += \
-                f"🔊 Generating {LANG_NAMES[tgt]} speech (Parler-TTS)...\n"
+                f"🔊 Generating {LANG_NAMES[tgt]} speech (MMS-TTS, fast)...\n"
             total_dur   = get_duration(upload_path)
             wav_name    = make_output_name(original_name, tgt, "wav")
             dubbed_path = f"output/{wav_name}"
-            synthesize_segments(segments, texts, dubbed_path,
-                                  total_dur, job_id)
+            synthesize_segments(segments, texts, tgt,
+                                  dubbed_path, total_dur, job_id)
             jobs[job_id]["log"] += "✅ Dubbed audio ready\n"
 
-        # Step 5: Burn subtitles + replace audio in video
         if kind == "video":
             jobs[job_id]["log"] += "🎬 Creating final video...\n"
             mp4_name  = make_output_name(original_name, tgt, "mp4")
@@ -302,11 +267,11 @@ def run_pipeline_job(job_id, upload_path, original_name, tgt):
 # ─── FLASK APP ────────────────────────────────────────
 app = Flask(__name__)
 
-HTML = r"""
+HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-  <title>BAIF Indic Translation Pipeline</title>
+  <title>BAIF Indic Translation Pipeline (Lite)</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, sans-serif; background: #f0f2f5; color: #333; }
@@ -358,9 +323,8 @@ HTML = r"""
 </head>
 <body>
 <div class="header">
-  <h1>🌐 BAIF Offline Indic Translation Pipeline</h1>
-  <p>Upload video / audio / text → Translate to Hindi, Marathi or English
-     → Watch with subtitles &amp; dubbed audio</p>
+  <h1>🌐 BAIF Offline Indic Translation Pipeline (Lite)</h1>
+  <p>Fast, lightweight version — Whisper small + distilled IndicTrans2 + MMS-TTS</p>
 </div>
 
 <div class="container">
@@ -379,15 +343,9 @@ HTML = r"""
 
     <label>🌐 Translate To</label>
     <div class="radio-group">
-      <label>
-        <input type="radio" name="lang" value="Hindi" checked> 🇮🇳 Hindi
-      </label>
-      <label>
-        <input type="radio" name="lang" value="Marathi"> 🇮🇳 Marathi
-      </label>
-      <label>
-        <input type="radio" name="lang" value="English"> 🇬🇧 English
-      </label>
+      <label><input type="radio" name="lang" value="Hindi" checked> 🇮🇳 Hindi</label>
+      <label><input type="radio" name="lang" value="Marathi"> 🇮🇳 Marathi</label>
+      <label><input type="radio" name="lang" value="English"> 🇬🇧 English</label>
     </div>
 
     <button class="btn" id="processBtn" onclick="processFile()">
@@ -398,9 +356,7 @@ HTML = r"""
   <div class="panel right">
     <div class="section-title">📋 Processing Log</div>
     <div class="log-box" id="logBox">Waiting for input...</div>
-    <div class="spinner" id="spinner">
-      ⏳ Working in background — log updates every 3 seconds...
-    </div>
+    <div class="spinner" id="spinner">⏳ Working in background — updates every 3s...</div>
 
     <div id="videoSection" style="display:none">
       <div class="section-title">🎬 Output Video (dubbed + subtitles)</div>
@@ -429,39 +385,32 @@ function updateFileName(input) {
   document.getElementById('fileName').textContent =
     input.files[0] ? input.files[0].name : 'Click to choose file';
 }
-
 function setLog(msg) {
   const b = document.getElementById('logBox');
   b.textContent = msg;
   b.scrollTop   = b.scrollHeight;
 }
-
 function resetBtn() {
   document.getElementById('spinner').style.display = 'none';
   const btn = document.getElementById('processBtn');
   btn.disabled    = false;
   btn.textContent = '🚀 Process & Translate';
 }
-
 async function processFile() {
   const fi = document.getElementById('fileInput');
   if (!fi.files[0]) { alert('Please select a file first!'); return; }
-
   const lang = document.querySelector('input[name="lang"]:checked').value;
   const btn  = document.getElementById('processBtn');
   btn.disabled    = true;
   btn.textContent = '⏳ Processing...';
-
   document.getElementById('logBox').textContent = '';
   ['videoSection','audioSection','downloadSection'].forEach(
     id => document.getElementById(id).style.display = 'none');
   document.getElementById('spinner').style.display = 'block';
   setLog('📤 Uploading...');
-
   const fd = new FormData();
   fd.append('file', fi.files[0]);
   fd.append('language', lang);
-
   try {
     const res  = await fetch('/process', { method: 'POST', body: fd });
     const data = await res.json();
@@ -472,30 +421,25 @@ async function processFile() {
     resetBtn();
   }
 }
-
 async function pollStatus(jobId) {
   try {
     const res = await fetch('/status/' + jobId);
     const job = await res.json();
     setLog(job.log);
-
     if (job.status === 'processing') {
       setTimeout(() => pollStatus(jobId), 3000);
       return;
     }
-
     if (job.status === 'done') {
       const d = job.result;
       if (d.video) {
         document.getElementById('videoSection').style.display = 'block';
-        document.getElementById('videoPlayer').src =
-          d.video + '?t=' + Date.now();
+        document.getElementById('videoPlayer').src = d.video + '?t=' + Date.now();
         document.getElementById('dlMP4').href = d.video;
       }
       if (d.audio) {
         document.getElementById('audioSection').style.display = 'block';
-        document.getElementById('audioPlayer').src =
-          d.audio + '?t=' + Date.now();
+        document.getElementById('audioPlayer').src = d.audio + '?t=' + Date.now();
         document.getElementById('dlWAV').href = d.audio;
       }
       document.getElementById('downloadSection').style.display = 'block';
@@ -525,19 +469,14 @@ def process():
     original_name = file.filename
     upload_path   = os.path.join("uploads", f"{job_id}_{file.filename}")
     file.save(upload_path)
-
-    jobs[job_id] = {
-        "status": "processing",
-        "log":    f"📁 File: {original_name}\n",
-        "result": None,
-    }
-
+    jobs[job_id] = {"status": "processing",
+                     "log": f"📁 File: {original_name}\n",
+                     "result": None}
     threading.Thread(
         target=run_pipeline_job,
         args=(job_id, upload_path, original_name, tgt),
         daemon=True,
     ).start()
-
     return jsonify({"job_id": job_id})
 
 @app.route("/status/<job_id>")

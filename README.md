@@ -63,7 +63,10 @@ pip install --upgrade pip
 pip install torch
 ```
 ```
-pip install torch --index-url https://download.pytorch.org/whl/cu121
+pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+```
+```
+pip install torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
 ```
 ```
 pip install faster-whisper
@@ -100,9 +103,10 @@ hf auth login
 Paste your token when prompted.
 
 6. Visit each link below while logged in and click "Agree and access repository":
-   - https://huggingface.co/ai4bharat/indictrans2-en-indic-1B
-   - https://huggingface.co/ai4bharat/indictrans2-indic-en-1B
-   - https://huggingface.co/ai4bharat/indictrans2-indic-indic-1B
+   - https://huggingface.co/ai4bharat/indictrans2-en-indic-dist-200M
+   - https://huggingface.co/ai4bharat/indictrans2-indic-en-dist-200M
+   - https://huggingface.co/ai4bharat/indictrans2-indic-indic-dist-320M
+
    - https://huggingface.co/ai4bharat/indic-parler-tts
 
 ---

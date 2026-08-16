@@ -4,6 +4,9 @@ An offline translation pipeline that accepts text, audio, and video,
 transcribes speech, translates into Indian regional languages, and
 generates dubbed audio and SRT/VTT subtitles.
 
+C:\Users\haree\whisper-env\Scripts\activate.bat
+python C:\Users\haree\baif-translation-pipeline-lite\launcher.py
+
 ---
 
 ## ✅ Verified Setup Steps (Windows)

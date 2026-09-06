@@ -8,7 +8,7 @@ REM Edit the paths below if your folders are different.
 REM ---------------------------------------------------------
 
 set VENV_PATH=C:\Users\hi\BAIF_HACKTHON\whisper-env
-set SCRIPT_PATH=C:\Users\hi\BAIF_HACKTHON\app_flask_05Sep_V16.py
+set SCRIPT_PATH=C:\Users\hi\BAIF_HACKTHON\app_flask.py
 set LAUNCHER_URL=http://127.0.0.1:5000/
 set LAUNCHER_PORT=5000
 

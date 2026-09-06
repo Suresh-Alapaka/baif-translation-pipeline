@@ -1,0 +1,33 @@
+1.Copy BAIF_HACKTHON Folder in c:users/<user name>
+2.Install Pre_Requisite Softwares available in BAIF_HACKTHON folder (Python 3.13, Git, Visual studio)
+Python -- check "Add python.exe to PATH"
+ Confirm Python is ready
+python --version
+
+Install Git -- Double click Git installer click on Next until installation completed
+
+Visual studion steps
+#Run the installer
+#Select "Desktop development with C++"
+#Click Install (large download, takes 15-30 mins)
+#Restart your terminal after
+3.Install ffmpeg -- Open command promt and execute below command
+winget install ffmpeg
+4.Close and open the cmd again and check version
+ffmpeg -version
+5.Create Python virtual environment
+cd C:\Users\<your-username>\BAIF_HACKATHON
+python -m venv whisper-env
+whisper-env\Scripts\activate
+6. git clone https://github.com/descriptinc/audiotools
+7.git config --global --get http.proxy
+8.git config --global --get http.sslVerify
+9.git config --global core.longpaths true
+10.pip install -r requirements.txt
+11.Change the paths of Whisper evi and app_flask.py  in Start_Flask file
+12.Double Click on Start_Flask which will automatically install whisper large V3 turbo for the first run
+
+
+
+
+
